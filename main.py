@@ -122,6 +122,9 @@ def answer_agent(state):
 
     answer = llm(prompt).content
     insert_application_logs(state["session_id"], state["query"], answer, llm.model_name)
+    print("=== AI Answer ===")
+    print(answer)
+    print("================\n")
     return {"answer": answer}
 
 def continue_check_agent(state):
@@ -166,6 +169,8 @@ graph.add_conditional_edges(
 app = graph.compile()
 
 # 可视化流程图
-png_data = app.get_graph().draw_png()
-with open("AgenticRAG/rag_graph.png", "wb") as f:
-    f.write(png_data)
+# png_data = app.get_graph().draw_png()
+# with open("AgenticRAG/rag_graph.png", "wb") as f:
+#     f.write(png_data)
+
+app.invoke({})
