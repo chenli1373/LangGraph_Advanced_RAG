@@ -4,6 +4,8 @@ from typing import TypedDict
 from langchain_utils import *
 from db_utils import *
 from chroma_utils import *
+from evaluation import evaluation_all
+from bad_case_utils import is_bad_case, save_bad_case, build_few_shot_examples
 import os
 import uuid
 
@@ -17,6 +19,14 @@ class RAGState(TypedDict):
     RRF_docs: str
     reranked_docs: str
     answer: str
+
+    score_rewrite: float
+    score_multi_query: float
+    score_retrieval: float
+    score_rerank: float
+    score_answer: float
+    score_rules: float
+    final_score: float
 
 # 保存已知用户 session_id 的字典
 user_session = {} # {user_id: session_id}
@@ -113,11 +123,21 @@ def answer_agent(state):
     
     context = "\n".join([doc.page_content for doc in reranked_docs[:3]])
 
+    few_shot = build_few_shot_examples()
+
     prompt = f"""You are a helpful and precise assistant for answering questions based on the following retrieved documents.
     Use only the information from the retrieved documents to answer the question. If the retrieved documents do not
     contain enough information to answer the question, say you don't know. Do not try to fabricate an answer.
+
+    ----------------------------
+    Bad Cases Examples (learn what NOT to do): {few_shot}
+    ----------------------------
+
+    Now, answer the following questions:
     Question: {query}
     Retrieved Documents:{context}
+
+    Answer:
     """
 
     answer = llm(prompt).content
@@ -126,6 +146,30 @@ def answer_agent(state):
     print(answer)
     print("================\n")
     return {"answer": answer}
+
+# 对以上 RAG 流程每个阶段进行评分
+def evaluation_agent(state):
+    state = evaluation_all(state)
+
+    print("=== Evaluation Scores ===")
+    print(f"Query Rewrite Score: {state['score_rewrite']:.4f}")
+    print(f"Multi-Query Score: {state['score_multi_query']:.4f}")
+    print(f"Retrieval Score: {state['score_retrieval']:.4f}")
+    print(f"Rerank Score: {state['score_rerank']:.4f}")
+    print(f"Answer Score: {state['score_answer']:.4f}")
+    print(f"Rules Score: {state['score_rules']:.4f}")
+    print(f"Final Score: {state['final_score']:.4f}")
+
+    return state
+
+# bad case 保存
+def bad_case_agent(state):
+    if is_bad_case(state):
+        print("Detect a bad case! Saving...")
+        save_bad_case(state)
+    else: print("This is a good case.")
+
+    return state
 
 def continue_check_agent(state):
     cont = input("Do you want to ask another question? (yes/no): ").strip().lower()
@@ -145,6 +189,8 @@ graph.add_node("retrieval", retrieval_agent)
 graph.add_node("fusion", fusion_agent)
 graph.add_node("rerank", rerank_agent)
 graph.add_node("answer", answer_agent)
+graph.add_node("evaluate", evaluation_agent)
+graph.add_node("bad_case", bad_case_agent)
 graph.add_node("router", lambda state: state)
 
 graph.set_entry_point("prepare")
@@ -156,7 +202,9 @@ graph.add_edge("multi_query", "retrieval")
 graph.add_edge("retrieval", "fusion")
 graph.add_edge("fusion", "rerank")
 graph.add_edge("rerank", "answer")
-graph.add_edge("answer", "router")
+graph.add_edge("answer", "evaluate")
+graph.add_edge("evaluate", "bad_case")
+graph.add_edge("bad_case", "router")
 graph.add_conditional_edges(
     "router",
     continue_check_agent,
